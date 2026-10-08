@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from "express";
-import { zEnrollmentBody } from "../libs/zodValidators.ts";
+import { zEnrollmentBody, zEnrollmentPutBody } from "../libs/zodValidators.ts";
 
-import type { CustomRequest } from "../libs/types.ts";
+import type { CustomRequest, Enrollment } from "../libs/types.ts";
 
 // import authentication middleware
 import { authenticateToken } from "../middlewares/authenMiddleware.ts";
@@ -9,6 +9,7 @@ import { checkRoles } from "../middlewares/checkRolesDBMiddleware.ts";
 
 // import database
 import { PrismaClient } from "../../generated/prisma/client.ts";
+import { success } from "zod";
 const prisma = new PrismaClient();
 
 const router = Router();
@@ -123,9 +124,191 @@ router.post(
 //   - validate body (400), ยังไม่ได้ลงวิชาเดิม (404), วิชาใหม่ = วิชาเดิม (400),
 //     วิชาใหม่ไม่มีจริง (404), ลงวิชาใหม่ไว้แล้ว (409)
 
+router.put(
+  "/",
+  authenticateToken,
+  checkRoles,
+  async (req: CustomRequest, res: Response) => {
+    const user = req.user;
+    const body = req.body as {
+      studentId: string;
+      courseId: string;
+      newCourseId: string;
+    };
+    try {
+      const result = zEnrollmentPutBody.safeParse(body);
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: "Validation failed",
+          errors: result.error.issues[0]?.message,
+        });
+      }
+
+      const studentId = result.data.studentId;
+      const courseId = result.data.courseId;
+      const newCourseId = result.data.newCourseId;
+
+      if (user?.role == "STUDENT") {
+        if (user.studentId != studentId) {
+          return res.status(403).json({
+            success: false,
+            message: "Forbidden1",
+          });
+        }
+      } else if (user?.role != "ADMIN") {
+        return res.status(403).json({
+          success: false,
+          message: "Forbidden2",
+        });
+      }
+
+      const Enroll_student = await prisma.enrollment.findMany({
+        where: { studentId: studentId },
+      });
+
+      if (Enroll_student.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: `Student ${studentId} is Not Found`,
+        });
+      }
+
+      const Enroll_course = Enroll_student.find((c) => c.courseId === courseId);
+
+      if (!Enroll_course) {
+        return res.status(404).json({
+          success: false,
+          message: `Course ${courseId} is Not Found in Student ${studentId} `,
+        });
+      }
+
+      const isnewCourse = await prisma.course.findUnique({
+        where: { courseId: newCourseId },
+      });
+
+      if (!isnewCourse) {
+        return res.status(404).json({
+          success: false,
+          message: `Course ${courseId} is Not Found`,
+        });
+      }
+
+      if (Enroll_course.courseId === isnewCourse.courseId) {
+        return res.status(400).json({
+          success: false,
+          message: "Bad Request",
+        });
+      }
+
+      const Enroll_newCourse = Enroll_student.find(
+        (n) => n.courseId === isnewCourse.courseId,
+      );
+
+      if (Enroll_newCourse) {
+        return res.status(409).json({
+          success: false,
+          message: "Conflict",
+        });
+      }
+
+      const updateEnrollment = await prisma.enrollment.update({
+        where: { id: Enroll_course.id },
+        data: { courseId: newCourseId },
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: `Student ${body.studentId} has been updated successfully`,
+        data: updateEnrollment,
+      });
+    } catch (err) {
+      return res.status(500).json({
+        success: false,
+        message: "Something is wrong, please try again",
+        error: err,
+      });
+    }
+  },
+);
+
 // TODO การบ้าน 2.2: DELETE /api/v3/enrollments, body = {studentId, courseId}
 //   ยกเลิกการลงทะเบียน (drop)
 //   - ADMIN ลบได้ทุกคน / STUDENT ลบได้แค่ของตัวเอง (403)
 //   - validate body (400), ไม่พบการลงทะเบียน (404)
+
+router.delete(
+  "/",
+  authenticateToken,
+  checkRoles,
+  async (req: CustomRequest, res: Response) => {
+    try {
+      const user = req.user;
+      const body = req.body as Enrollment;
+
+      const result = zEnrollmentBody.safeParse(body);
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: "Validation failed",
+          errors: result.error.issues[0]?.message,
+        });
+      }
+
+      const studentId = result.data.studentId;
+      const courseId = result.data.courseId;
+
+      if (user?.role == "STUDENT") {
+        if (user.studentId != studentId) {
+          return res.status(403).json({
+            success: false,
+            message: "Forbidden1",
+          });
+        }
+      } else if (user?.role != "ADMIN") {
+        return res.status(403).json({
+          success: false,
+          message: "Forbidden2",
+        });
+      }
+
+      const Enroll_student = await prisma.enrollment.findMany({
+        where: { studentId: studentId },
+      });
+
+      if (Enroll_student.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: `Student ${studentId} is Not Found`,
+        });
+      }
+
+      const Enroll_course = Enroll_student.find((c) => c.courseId === courseId);
+
+      if (!Enroll_course) {
+        return res.status(404).json({
+          success: false,
+          message: `Course ${courseId} is Not Found in Student ${studentId} `,
+        });
+      }
+
+      const delete_enrollment = await prisma.enrollment.delete({
+        where: { id: Enroll_course.id },
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: `CouseId ${body.courseId} in Student ${body.studentId} has been deleted successfully`,
+        data: delete_enrollment,
+      });
+    } catch (err) {
+      return res.status(500).json({
+        success: false,
+        message: "Something is wrong, please try again",
+        error: err,
+      });
+    }
+  },
+);
 
 export default router;

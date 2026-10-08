@@ -44,7 +44,7 @@ export default function HomePage() {
       </Card>
 
       <p className="text-center text-xs text-muted-foreground">
-        จัดทำโดย ผู้สอน (Lecture)
+        จัดทำโดย เตโชทัย ทั้งเจริญกุล รหัส 670610524
       </p>
     </div>
   );
